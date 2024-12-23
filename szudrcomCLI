@@ -1,0 +1,347 @@
+#!/bin/bash
+
+# Function to display help information
+display_help() {
+    echo "Usage: ./szudrcomCLI [COMMAND]"
+    echo ""
+    echo "A CLI tool for managing network authentication at SZU"
+    echo ""
+    echo "Commands:"
+    echo "  config    Configure the login credentials and location"
+    echo "            Options:"
+    echo "              -l, --location    Location type (dormitory or office)"
+    echo "              -u, --user        User ID (numbers only)"
+    echo "              -p, --password    Password (alphanumeric only)"
+    echo ""
+    echo "  auto      Set up automatic login task in OpenWrt"
+    echo "            Note: Requires OpenWrt system and prior config setup"
+    echo ""
+    echo "  clean     Remove login script and auto-login task"
+    echo "            Cleans up:"
+    echo "              - Login script (./szudrcomlogin)"
+    echo "              - Crontab entry if exists"
+    echo ""
+    echo "  help      Display this help message"
+    echo ""
+    echo "Examples:"
+    echo "  1. Configure for dormitory:"
+    echo "     ./szudrcomCLI config -l dormitory -u 12345678 -p pass123"
+    echo ""
+    echo "  2. Configure for office:"
+    echo "     ./szudrcomCLI config -l office -u 12345678 -p pass123"
+    echo ""
+    echo "  3. Set up auto-login:"
+    echo "     ./szudrcomCLI auto"
+    echo ""
+    echo "  4. Clean up everything:"
+    echo "     ./szudrcomCLI clean"
+}
+
+# Function to validate location
+validate_location() {
+    local location=$1
+    if [[ "$location" != "dormitory" && "$location" != "office" ]]; then
+        echo "Error: Location must be either 'dormitory' or 'office'"
+        return 1
+    fi
+    return 0
+}
+
+# Function to validate user ID
+validate_user() {
+    local user=$1
+    if [[ ! "$user" =~ ^[0-9]+$ ]]; then
+        echo "Error: User ID must contain only numbers"
+        return 1
+    fi
+    return 0
+}
+
+# Function to validate password
+validate_password() {
+    local password=$1
+    if [[ ! "$password" =~ ^[a-zA-Z0-9]+$ ]]; then
+        echo "Error: Password must contain only letters and numbers"
+        return 1
+    fi
+    return 0
+}
+
+# Function to create login script for dormitory
+create_dormitory_login() {
+    local user=$1
+    local password=$2
+    
+    cat > szudrcomlogin << 'EOF'
+#!/bin/bash
+
+account="ACCOUNT_PLACEHOLDER"
+password="PASSWORD_PLACEHOLDER"
+
+# ping 判断联网状态
+ping -c 1 -W 1 baidu.com > /dev/null
+if [[ $? -eq 0 ]]
+then
+    echo 'network is well' # 已联网
+else
+    echo 'ping again' # 未联网 再次判断联网状态
+    ping -c 3 -W 1 163.com > /dev/null
+    ret01=$?
+    ping -c 3 -W 1 qq.com > /dev/null
+    ret02=$?
+    ping -c 3 -W 1 bilibili.com > /dev/null
+    ret03=$?  
+    if [[ $ret01 -eq 0 || $ret02 -eq 0 || $ret03 -eq 0 ]]
+    then
+        echo 'network is really well' # 确认已联网
+    else
+        echo `date '+%Y-%m-%d %H:%M:%S'` >> ./szudrcom_login.log
+        echo 'network is not well and try to connect'  >> ./szudrcom_login.log # 确认未联网
+        CURRENT_IP=$(ip -4 addr show | grep inet | grep -v 192 | grep -v 127 | awk '{print $2}' | cut -d/ -f1) # 获取wan网口IP
+        sleep 5
+        # 登录
+        wget "http://172.30.255.42:801/eportal/portal/login?callback=dr1003&login_method=1&user_account=%2C0%2C${account}&user_password=${password}&wlan_user_ip=${CURRENT_IP}&wlan_user_ipv6=&wlan_user_mac=000000000000&wlan_ac_ip=172.30.255.41&wlan_ac_name=&jsVersion=4.1.3&terminal_type=1&lang=zh-cn&v=5525&lang=zh"
+        sleep 10
+        # 判断登陆结果
+        ping -c 3 -W 1 baidu.com > /dev/null
+        ret11=$?
+        ping -c 3 -W 1 qq.com > /dev/null
+        ret12=$?
+        if [[ $ret11 -eq 0 || $ret12 -eq 0 ]]
+        then
+            echo 'network is well now' >> ./szudrcom_login.log # 已联网
+            # 删除登录缓存
+            rm login\?callback*
+        else
+            echo 'network is still error and try to run again' >> ./szudrcom_login.log # 未联网 稍后再次登录
+        fi
+    fi
+fi
+
+EOF
+
+    # Replace placeholders with actual values
+    sed -i "s/ACCOUNT_PLACEHOLDER/$user/" szudrcomlogin
+    sed -i "s/PASSWORD_PLACEHOLDER/$password/" szudrcomlogin
+    
+    # Make the file executable
+    chmod +x szudrcomlogin
+    
+    echo "Created szudrcomlogin script for dormitory"
+}
+
+# Function to create login script for office
+create_office_login() {
+    local user=$1
+    local password=$2
+    
+    cat > szudrcomlogin << 'EOF'
+#!/bin/bash
+
+account="ACCOUNT_PLACEHOLDER"
+password="PASSWORD_PLACEHOLDER"
+
+# ping 判断联网状态
+ping -c 1 -W 1 baidu.com > /dev/null
+if [[ $? -eq 0 ]]
+then
+    echo 'network is well' # 已联网
+else
+    echo 'ping again' # 未联网 再次判断联网状态
+    ping -c 3 -W 1 163.com > /dev/null
+    ret01=$?
+    ping -c 3 -W 1 qq.com > /dev/null
+    ret02=$?
+    ping -c 3 -W 1 bilibili.com > /dev/null
+    ret03=$?  
+    if [[ $ret01 -eq 0 || $ret02 -eq 0 || $ret03 -eq 0 ]]
+    then
+        echo 'network is really well' # 确认已联网
+    else
+        echo `date '+%Y-%m-%d %H:%M:%S'` >> ./szudrcom_login.log
+        echo 'network is not well and try to connect'  >> ./szudrcom_login.log # 确认未联网
+        CURRENT_IP=$(ip -4 addr show | grep inet | grep -v 192 | grep -v 127 | awk '{print $2}' | cut -d/ -f1) # 获取wan网口IP
+        sleep 5
+        # 登录
+        curl -X POST -d "DDDDD=${account}&upass=${password}&R1=0&R6=0&para=00&0MKKey=123456" 192.168.254.220
+        sleep 10
+        # 判断登陆结果
+        ping -c 3 -W 1 baidu.com > /dev/null
+        ret11=$?
+        ping -c 3 -W 1 qq.com > /dev/null
+        ret12=$?
+        if [[ $ret11 -eq 0 || $ret12 -eq 0 ]]
+        then
+            echo 'network is well now' >> ./szudrcom_login.log # 已联网
+            # 删除登录缓存
+            rm login\?callback*
+        else
+            echo 'network is still error and try to run again' >> ./szudrcom_login.log # 未联网 稍后再次登录
+        fi
+    fi
+fi
+
+EOF
+
+    # Replace placeholders with actual values
+    sed -i "s/ACCOUNT_PLACEHOLDER/$user/" szudrcomlogin
+    sed -i "s/PASSWORD_PLACEHOLDER/$password/" szudrcomlogin
+    
+    # Make the file executable
+    chmod +x szudrcomlogin
+    
+    echo "Created szudrcomlogin script for office"
+}
+
+# Function to handle configuration
+handle_config() {
+    local location=""
+    local user=""
+    local password=""
+
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -l|--location)
+                location="$2"
+                shift 2
+                ;;
+            -u|--user)
+                user="$2"
+                shift 2
+                ;;
+            -p|--password)
+                password="$2"
+                shift 2
+                ;;
+            *)
+                echo "Error: Invalid option $1"
+                display_help
+                exit 1
+                ;;
+        esac
+    done
+
+    # Check if all required parameters are provided
+    if [[ -z "$location" || -z "$user" || -z "$password" ]]; then
+        echo "Error: Missing required parameters"
+        display_help
+        exit 1
+    fi
+
+    # Validate parameters
+    validate_location "$location" || exit 1
+    validate_user "$user" || exit 1
+    validate_password "$password" || exit 1
+
+    # Create appropriate login script based on location
+    if [[ "$location" == "dormitory" ]]; then
+        create_dormitory_login "$user" "$password"
+    elif [[ "$location" == "office" ]]; then
+        create_office_login "$user" "$password"
+    fi
+
+    echo "Configuration successful:"
+    echo "Location: $location"
+    echo "User: $user"
+    echo "Password: $password"
+}
+
+# Function to handle automatic mode
+handle_auto() {
+    # 检查 szudrcomlogin 文件是否存在
+    if [[ ! -f "./szudrcomlogin" ]]; then
+        echo "Error: szudrcomlogin file not found"
+        echo "Please run './szudrcomCLI config' first to generate the login script"
+        exit 1
+    fi
+
+    # 检查系统是否为 OpenWrt
+    local system_name
+    if ! system_name=$(source /etc/os-release && echo "$NAME"); then
+        echo "Error: Cannot determine system type"
+        exit 1
+    fi
+    
+    if [[ "$system_name" != "OpenWrt" ]]; then
+        echo "Currently, ./szudrcomCLI auto function only works on OpenWrt system. For other systems, please configure scheduled tasks manually."
+        exit 1
+    fi
+
+    # 获取 szudrcomlogin 的绝对路径
+    local script_path
+    script_path=$(readlink -f ./szudrcomlogin)
+
+    # 处理 crontab 文件
+    local crontab_file="/etc/crontabs/root"
+    local cron_command="*/1 * * * * bash ${script_path}"
+    
+    # 如果 crontab 目录不存在，创建它
+    mkdir -p /etc/crontabs
+
+    # 如果文件不存在，创建文件并添加 cron 任务
+    if [[ ! -f "$crontab_file" ]]; then
+        echo "$cron_command" > "$crontab_file"
+    else
+        # 如果文件存在，删除包含 szudrcomlogin 的行，然后添加新的任务
+        sed -i '/szudrcomlogin/d' "$crontab_file"
+        echo "$cron_command" >> "$crontab_file"
+    fi
+
+    # 重启 cron 服务
+    /etc/init.d/cron restart
+
+    echo "Auto login task has been configured successfully"
+    echo "The login script will run every minute"
+}
+
+# Function to handle cleanup
+handle_clean() {
+    local success=false
+
+    # Check and remove szudrcomlogin file
+    if [[ -f "./szudrcomlogin" ]]; then
+        rm "./szudrcomlogin"
+        echo "Removed szudrcomlogin file"
+        success=true
+    fi
+
+    # Check and clean crontab entry
+    local crontab_file="/etc/crontabs/root"
+    if [[ -f "$crontab_file" ]] && grep -q "szudrcomlogin" "$crontab_file"; then
+        # Remove the line containing szudrcomlogin
+        sed -i '/szudrcomlogin/d' "$crontab_file"
+        # Restart cron service
+        /etc/init.d/cron restart
+        echo "Removed auto-login task from crontab"
+        success=true
+    fi
+
+    if [[ "$success" == true ]]; then
+        echo "Cleanup completed"
+    else
+        echo "Nothing to clean"
+    fi
+}
+
+# Main script logic
+case "$1" in
+    "config")
+        shift
+        handle_config "$@"
+        ;;
+    "auto")
+        handle_auto
+        ;;
+    "clean")
+        handle_clean
+        ;;
+    "help"|"")
+        display_help
+        ;;
+    *)
+        echo "Error: Unknown command '$1'"
+        echo "Run './szudrcomCLI help' for usage information"
+        exit 1
+        ;;
+esac
